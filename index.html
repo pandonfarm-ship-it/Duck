@@ -3,113 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Duck Online: Genesis Update</title>
+    <title>Duck Online</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', monospace; touch-action: none; }
-        #game-ui { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0, 40, 0, 0.8); padding: 10px; border: 2px solid #0f0; color: #0f0; font-size: 12px; border-radius: 5px; }
-        .status-line { margin-bottom: 5px; }
-        #id-display { color: #ff0; font-weight: bold; }
-        input { background: #000; border: 1px solid #0f0; color: #0f0; padding: 5px; width: 100px; outline: none; }
-        button { background: #0f0; border: none; color: #000; padding: 5px 10px; font-weight: bold; cursor: pointer; }
-        #joystick-container { position: absolute; bottom: 40px; right: 40px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px solid rgba(0,255,200,0.5); }
-        #joystick { position: absolute; top: 35px; left: 35px; width: 50px; height: 50px; background: #0fffc0; border-radius: 50%; box-shadow: 0 0 20px #0fffc0; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; touch-action: none; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(0, 0, 0, 0.8); padding: 15px; border: 2px solid #0f0; color: #0f0; border-radius: 10px; }
+        #id-display { color: #ff0; font-weight: bold; font-size: 18px; }
+        input { background: #111; border: 1px solid #0f0; color: #0f0; padding: 8px; width: 120px; margin: 5px 0; border-radius: 5px; }
+        button { background: #0f0; border: none; color: #000; padding: 8px 15px; font-weight: bold; border-radius: 5px; cursor: pointer; }
+        #joystick-zone { position: absolute; bottom: 50px; right: 50px; width: 150px; height: 150px; background: rgba(255,255,255,0.05); border-radius: 50%; border: 1px solid rgba(0,255,0,0.2); }
+        #stick { position: absolute; top: 50px; left: 50px; width: 50px; height: 50px; background: #0f0; border-radius: 50%; box-shadow: 0 0 15px #0f0; }
         canvas { display: block; }
     </style>
 </head>
 <body>
 
-<div id="game-ui">
-    <div class="status-line">WORLD STATE: <span style="color:#0f0">STABLE</span></div>
-    <div class="status-line">YOUR ID: <span id="id-display">ПОДКЛЮЧЕНИЕ...</span></div>
-    <div style="margin-top:10px;">
-        <input type="text" id="friend-id" placeholder="ID ДРУГА">
-        <button onclick="connectToFriend()">OK</button>
-    </div>
-    <div id="debug" style="font-size: 10px; color: #888; margin-top: 5px;"></div>
+<div id="ui">
+    <div>ТВОЙ ID: <span id="id-display">СВЯЗЬ...</span></div>
+    <input type="text" id="peer-id" placeholder="ID ДРУГА">
+    <button onclick="connect()">ИГРАТЬ ВМЕСТЕ</button>
+    <div id="log" style="font-size: 10px; color: #666; margin-top: 5px;"></div>
 </div>
 
-<div id="joystick-container">
-    <div id="joystick"></div>
-</div>
-
-<canvas id="gameCanvas"></canvas>
+<div id="joystick-zone"><div id="stick"></div></div>
+<canvas id="canvas"></canvas>
 
 <script>
-    const canvas = document.getElementById('gameCanvas');
+    const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const idDisplay = document.getElementById('id-display');
-    const debug = document.getElementById('debug');
-
+    const idShow = document.getElementById('id-display');
+    const log = document.getElementById('log');
+    
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
+    let myPos = { x: canvas.width/2, y: canvas.height/2 };
     let players = {};
-    let myId = 'duck-' + Math.floor(Math.random() * 9000 + 1000);
-    
-    // НАСТРОЙКИ СЕТИ (PeerJS)
+    let myId = 'duck-' + Math.floor(Math.random() * 8999 + 1000);
+
+    // УМНОЕ ПОДКЛЮЧЕНИЕ (работает на 4G)
     const peer = new Peer(myId, {
-        host: '0.peerjs.com',
-        secure: true,
-        port: 443,
-        debug: 1
+        debug: 1,
+        config: {'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]}
     });
 
-    peer.on('open', (id) => {
-        idDisplay.innerText = id;
-        players[id] = { x: canvas.width/2, y: canvas.height/2, color: '#0fffc0' };
-        debug.innerText = "Сеть готова";
+    peer.on('open', id => {
+        idShow.innerText = id;
+        log.innerText = "Сеть активна";
+        players[id] = { x: myPos.x, y: myPos.y, color: '#0f0' };
     });
 
-    peer.on('error', (err) => {
-        idDisplay.innerText = "ОШИБКА";
-        debug.innerText = "Ошибка: " + err.type;
-    });
+    peer.on('connection', c => setup(c));
 
-    // Прием входящего соединения
-    peer.on('connection', (conn) => {
-        setupConnection(conn);
-    });
-
-    function connectToFriend() {
-        const friendId = document.getElementById('friend-id').value;
-        if (friendId) {
-            debug.innerText = "Подключение к " + friendId + "...";
-            const conn = peer.connect(friendId);
-            setupConnection(conn);
-        }
+    function connect() {
+        const friend = document.getElementById('peer-id').value;
+        if(friend) setup(peer.connect(friend));
     }
 
-    function setupConnection(conn) {
+    function setup(conn) {
         conn.on('open', () => {
-            debug.innerText = "СВЯЗЬ УСТАНОВЛЕНА!";
+            log.innerText = "Друг подключен!";
             setInterval(() => {
-                conn.send({
-                    id: myId,
-                    x: players[myId].x,
-                    y: players[myId].y
-                });
+                conn.send({ id: myId, x: myPos.x, y: myPos.y });
             }, 50);
         });
-
-        conn.on('data', (data) => {
-            players[data.id] = { x: data.x, y: data.y, color: '#ffea00' };
+        conn.on('data', data => {
+            players[data.id] = { x: data.x, y: data.y, color: '#ff0' };
         });
     }
 
-    // ЛОГИКА ДВИЖЕНИЯ (Джойстик)
-    const joyContainer = document.getElementById('joystick-container');
-    const joyStick = document.getElementById('joystick');
-    let moveX = 0, moveY = 0;
-    let isMoving = false;
+    // ДЖОЙСТИК
+    const zone = document.getElementById('joystick-zone');
+    const stick = document.getElementById('stick');
+    let move = { x: 0, y: 0 };
 
-    joyContainer.addEventListener('touchstart', (e) => { isMoving = true; handleJoy(e); });
-    joyContainer.addEventListener('touchmove', (e) => { handleJoy(e); });
-    joyContainer.addEventListener('touchend', () => { 
-        isMoving = false; 
-        joyStick.style.transform = `translate(0px, 0px)`;
-        moveX = 0; moveY = 0;
+    zone.addEventListener('touchstart', e => handle(e));
+    zone.addEventListener('touchmove', e => handle(e));
+    zone.addEventListener('touchend', () => {
+        stick.style.transform = 'translate(0,0)';
+        move = { x: 0, y: 0 };
     });
+
+    function handle(e) {
+        const r = zone.getBoundingClientRect();
+        const cx = r.left + 75, cy = r.top + 75;
+        const t = e.touches[0];
+        let dx = t.clientX - cx, dy = t.clientY - cy;
+        const d = Math.min(Math.sqrt(dx*dx+dy*dy), 50);
+        const ang = Math.atan2(dy, dx);
+        dx = Math.cos(ang) * d; dy = Math.sin(ang) * d;
+        stick.style.transform = `translate(${dx}px,${dy}px)`;
+        move = { x: dx/10, y: dy/10 };
+    }
+
+    function draw() {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        
+        myPos.x += move.x; myPos.y += move.y;
+        players[myId].x = myPos.x; players[myId].y = myPos.y;
+
+        for(let id in players) {
+            const p = players[id];
+            // Рисуем утку
+            ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.arc(p.x, p.y, 20, 0, 7); ctx.fill();
+            ctx.fillStyle = '#f60';
+            ctx.fillRect(p.x+15, p.y-5, 12, 8); // Клюв
+            ctx.fillStyle = '#0f0';
+            ctx.font = '12px Arial';
+            ctx.fillText(id === myId ? "Я" : "ДРУГ", p.x-15, p.y-30);
+        }
+        requestAnimationFrame(draw);
+    }
+    draw();
+</script>
+</body>
+</html>
 
     function handleJoy(e) {
         const rect = joyContainer.getBoundingClientRect();
