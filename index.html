@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Duck Online: Genesis Update</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: monospace; color: #00ffcc; }
+        #status-panel { position: absolute; top: 20px; left: 20px; border: 1px solid #00ffcc; padding: 10px; background: rgba(0, 20, 10, 0.8); border-radius: 8px; z-index: 100; font-size: 12px; }
+        .yellow { color: #ffff00; font-weight: bold; }
+        #joy { position: absolute; bottom: 40px; right: 40px; width: 80px; height: 80px; border: 2px solid #00ffcc; border-radius: 50%; z-index: 100; }
+        #stick { position: absolute; width: 30px; height: 30px; background: #00ffcc; border-radius: 50%; top: 25px; left: 25px; box-shadow: 0 0 15px #00ffcc; }
+        input { background: #000; border: 1px solid #00ffcc; color: #fff; width: 100px; padding: 2px; }
+        button { background: #00ffcc; border: none; color: #000; font-weight: bold; padding: 2px 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="status-panel">
+        <div>WORLD STATE: <span style="color: #00ffcc;">STABLE</span></div>
+        <div>YOUR ID: <span id="my-id" class="yellow">ГЕНЕРАЦИЯ...</span></div>
+        <div style="margin-top: 10px;">
+            <input type="text" id="friend-id" placeholder="ID ДРУГА">
+            <button onclick="connectToFriend()">OK</button>
+        </div>
+        <div id="info" style="margin-top: 5px; font-size: 10px; color: #aaa;">Ожидание сети...</div>
+    </div>
+
+    <div id="joy"><div id="stick"></div></div>
+
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+
+    <script>
+        let scene, camera, renderer, player, friendDuck;
+        let peer, conn;
+        let joyPos = { x: 0, y: 0, active: false };
+        const duckModel = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb';
+
+        // 1. СЕТЬ
+        function startNetwork() {
+            // Создаем Peer с коротким ID для удобства
+            const randomId = Math.floor(1000 + Math.random() * 9000);
+            peer = new Peer('duck-' + randomId); 
+
+            peer.on('open', (id) => {
+                document.getElementById('my-id').innerText = id;
+                document.getElementById('info').innerText = "ID ГОТОВ! Передай его другу.";
+            });
+
+            peer.on('connection', (c) => {
+                conn = c;
+                setupConn();
+                document.getElementById('info').innerText = "ДРУГ ЗАШЕЛ!";
+                if(!friendDuck) spawnFriend();
+            });
+
+            peer.on('error', (err) => {
+                document.getElementById('info').innerText = "ОШИБКА СЕТИ. Перезагрузи.";
+            });
+        }
+
+        function connectToFriend() {
+            const id = document.getElementById('friend-id').value;
+            if(!id) return;
+            conn = peer.connect(id);
+            conn.on('open', () => {
+                setupConn();
+                document.getElementById('info').innerText = "ПОДКЛЮЧЕНО К ДРУГУ!";
+                spawnFriend();
+            });
+        }
+
+        function setupConn() {
+            conn.on('data', (data) => {
+                if(friendDuck) {
+                    friendDuck.position.set(data.x, 0, data.z);
+                    friendDuck.rotation.y = data.ry;
+                }
+            });
+        }
+
+        // 2. ИГРА
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+            scene.add(new THREE.GridHelper(200, 40, 0x00ffcc, 0x002211));
+
+            new THREE.GLTFLoader().load(duckModel, (gltf) => {
+                player = gltf.scene;
+                player.scale.setScalar(2.5);
+                scene.add(player);
+                animate();
+            });
+
+            const joy = document.getElementById('joy');
+            joy.addEventListener('touchstart', () => joyPos.active = true);
+            window.addEventListener('touchmove', (e) => {
+                if(!joyPos.active) return;
+                const rect = joy.getBoundingClientRect();
+                const dx = e.touches[0].clientX - (rect.left + 40);
+                const dy = e.touches[0].clientY - (rect.top + 40);
+                const dist = Math.min(Math.sqrt(dx*dx+dy*dy), 30);
+                const angle = Math.atan2(dy, dx);
+                joyPos.x = Math.cos(angle) * (dist/30);
+                joyPos.y = Math.sin(angle) * (dist/30);
+                document.getElementById('stick').style.transform = `translate(${Math.cos(angle)*dist}px, ${Math.sin(angle)*dist}px)`;
+            });
+            window.addEventListener('touchend', () => { joyPos.active = false; joyPos.x = 0; joyPos.y = 0; });
+        }
+
+        function spawnFriend() {
+            new THREE.GLTFLoader().load(duckModel, (gltf) => {
+                friendDuck = gltf.scene;
+                friendDuck.scale.setScalar(2.5);
+                friendDuck.traverse(n => { if(n.isMesh) n.material = new THREE.MeshStandardMaterial({color: 0x00ffff}); });
+                scene.add(friendDuck);
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(player && joyPos.active) {
+                player.position.x += joyPos.x * 0.6;
+                player.position.z += joyPos.y * 0.6;
+                player.rotation.y = Math.atan2(-joyPos.x, -joyPos.y) + Math.PI;
+
+                if(conn && conn.open) {
+                    conn.send({ x: player.position.x, z: player.position.z, ry: player.rotation.y });
+                }
+
+                camera.position.lerp(new THREE.Vector3(player.position.x, 35, player.position.z + 45), 0.1);
+                camera.lookAt(player.position);
+            }
+            renderer.render(scene, camera);
+        }
+
+        init();
+        startNetwork();
+    </script>
+</body>
+</html>
